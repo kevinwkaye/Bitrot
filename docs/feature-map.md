@@ -71,7 +71,7 @@ What owners and reviewers describe, and how Bitrot does it:
 The pedal's loop is the source of both the fun and the problems on bass, so Bitrot gives the loop help it can switch off.
 
 - **Input chips: Bass, Guitar, Synth.** They set the range and the loop's speed. Bass goes down to 28 Hz (low B on a 5-string is 30.9 Hz).
-- **Lock assist.** Changeling's low-register tracker (McLeod on a decimated signal, octave guard, hysteresis on decay) runs alongside the loop. It tells the VCO where to land, so the loop locks after about 1.4 cycles: around 46 ms on low B and 36 ms on open E, with no octave hopping when a P Bass's second harmonic is louder than its fundamental.
+- **Lock assist.** Changeling's low-register tracker (McLeod on a decimated signal, octave guard, hysteresis on decay) runs alongside the loop. It tells the loop where to land and lines its phase up on the next edge. Measured in the render test: open E on bass locks in about 45 ms, every guitar note from E2 to E5 within 25 ms, and the lowest bass notes within three and a half cycles (about 100 ms on low B, where one cycle is already 32 ms). Held notes stay within 2 cents, with no octave hopping when the second harmonic is louder than the fundamental.
 - **Corrupt: Tight to Wild** (on the panel). Tight leans on lock assist. Wild takes it away and lets the raw loop hunt, chirp, lock to harmonics and stutter. The default sits a little towards Wild on guitar and Tight on bass.
 - **Built-in tracking compressor.** EarthQuaker's own advice, built in before the comparator. It only feeds the tracker, never the sound.
 - **Sub floor, so the subharmonic doesn't turn to mud.** On low E, −3 M2 is 4.6 Hz: a flutter, not a note. With Floor on, any subharmonic that would fall below 30 Hz moves up by octaves until it doesn't. The interval stays the same note name, just higher. Every sub voice is a clean band-limited square, and a gentle 25 Hz high-pass keeps DC and rumble out. **Floor is a toggle in the Subharmonic section**, on by default with the Bass input chip and off with Guitar and Synth. Off brings back the pedal's sub-audio flutter.
@@ -108,7 +108,7 @@ Flip Fella dark family: the same black housing, cards, ink and accent colours as
 
 - **Main page** in the pedal's four sections, left to right: Voice Mixer, Subharmonic, Frequency Modulator, Master Oscillator. Rotaries are flip cards showing the interval name.
 - **Strip** under the panel: input chips, tracking readout and lock bar, Corrupt, presets, footswitches A to D as on-screen buttons, expression bar, bypass.
-- **Deep page:** vibrato Depth, tracking compressor, gate, glide curve, floor frequency.
+- **Deep page:** vibrato Depth, tracking compressor, gate sensitivity, floor frequency, sum and difference or plain divide, Bend.
 - **Pedal page** copied from Prism Patch.
 - **Pebble** hops on each new note. When the loop loses lock, Pebble glitches: RGB split, sliced rows shifting sideways, square pixel eyes, and a stutter that repeats the last frame. Frozen, Pebble holds still with a frost outline. Octave up, Pebble stretches tall.
 
