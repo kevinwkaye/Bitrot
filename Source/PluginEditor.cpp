@@ -442,20 +442,19 @@ void FmCurve::paint (Graphics& g)
     }
     else
     {
+        // five notes over 1.25 s; the slide between them is a straight line at the glide speed,
+        // so at slow Rates it runs into the next note before it arrives (full height = 2 octaves)
         const float lv[5] = { 0.72f, 0.3f, 0.55f, 0.2f, 0.64f };
-        const float seg = W / 5.0f, gl = 4.0f + rate * 0.0f + (1.0f - rate) * (seg - 8.0f);
-        p.startNewSubPath (0.0f, H * lv[0]);
-        for (int i = 1; i < 5; ++i)
+        const float seg = W / 5.0f;
+        const float step = bit::BitrotEngine::glideSlew (rate) * (1.25f / W) * 0.5f;   // height per pixel
+        float y = lv[0];
+        p.startNewSubPath (0.0f, H * y);
+        for (float x = 1.0f; x <= W; x += 1.0f)
         {
-            const float x0 = (float) i * seg;
-            p.lineTo (x0, H * lv[i - 1]);
-            for (int k = 1; k <= 12; ++k)
-            {
-                const float u = (float) k / 12.0f, e = u * u * (3.0f - 2.0f * u);
-                p.lineTo (x0 + gl * u, H * (lv[i - 1] + (lv[i] - lv[i - 1]) * e));
-            }
+            const float target = lv[jlimit (0, 4, (int) (x / seg))];
+            y += jlimit (-step, step, target - y);
+            p.lineTo (x, H * y);
         }
-        p.lineTo (W, H * lv[4]);
     }
     g.setColour (ff::teal);
     g.strokePath (p, PathStrokeType (2.5f, PathStrokeType::curved, PathStrokeType::rounded));

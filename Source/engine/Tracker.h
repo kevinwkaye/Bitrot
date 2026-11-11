@@ -183,7 +183,7 @@ private:
             {
                 const int pk = peaks[(size_t) i];
                 if (std::abs ((float) pk - expect) <= expect * 0.045f + 1.0f && curve[(size_t) pk] >= 0.72f * best && curve[(size_t) pk] > 0.55f)
-                    return refine (pk, valid, clar);
+                    return refine (upOctaves (pk, valid), valid, clar);
             }
         }
 
@@ -198,7 +198,7 @@ private:
         if (settings.octaveGuard && ! grab)
         {
             const float base = peakValue (chosen, valid);
-            int pick = chosen; float pickV = base + 0.04f;
+            int pick = chosen; float pickV = base / kOctaveRatio;   // a longer period has to be clearly better
             for (int mult = 2; mult <= 4; ++mult)
             {
                 const int t2 = chosen * mult;
@@ -217,11 +217,35 @@ private:
                     if (v > v2) { v2 = v; t2best = tt; }
                 }
                 v2 = peakValue (t2best, valid);
-                if (v2 > pickV) { pick = t2best; pickV = v2 + 0.01f; }
+                if (v2 > pickV) { pick = t2best; pickV = v2 / kOctaveRatio; }
             }
             chosen = pick;
         }
-        return refine (chosen, valid, clar);
+        return refine (upOctaves (chosen, valid), valid, clar);
+    }
+
+    // A periodic signal also fits at twice its period, so a tracker that has settled on double
+    // the period never notices. If half the period fits nearly as well, the higher octave is the
+    // note: a real low note never repeats at half its period.
+    static constexpr float kOctaveRatio = 0.93f;
+    int upOctaves (int t, int valid) const
+    {
+        if (wild() > 0.45f) return t;   // wild keeps the original's octave mistakes
+        while (t / 2 >= tauMin)
+        {
+            const float here = peakValue (t, valid);
+            int half = t / 2; float hv = -2.0f;
+            for (int d = -1; d <= 1; ++d)
+            {
+                const int tt = t / 2 + d;
+                if (tt < tauMin || tt + windowFor (tt) > valid) continue;
+                const float v = peakValue (tt, valid);
+                if (v > hv) { hv = v; half = tt; }
+            }
+            if (hv > 0.8f && hv >= here * kOctaveRatio) t = half;
+            else break;
+        }
+        return t;
     }
 
     // interpolated height of the NSDF peak at or next to lag t

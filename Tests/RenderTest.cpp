@@ -422,6 +422,104 @@ static void performanceSuite()
 }
 
 // ------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------
+// Real playing: a phrase of picked and legato notes with finger vibrato, a pickup that makes
+// the second harmonic louder than the note, inharmonic strings and the last note muting under
+// the next. This is where the first build fell down (slurred glide, notes tracked an octave low
+// for their whole length, quiet inputs chopped), so it runs at three interface levels.
+struct Phrase { std::vector<float> x, truth; };
+static Phrase guitarPhrase (int base, float gain, uint32_t seed)
+{
+    Phrase ph;
+    ph.x.assign ((size_t) (20 * kSr), 0.0f);
+    ph.truth.assign (ph.x.size(), -1.0f);
+    Rng r; r.s = seed;
+    const int scale[] = { 0, 3, 5, 7, 10, 12, 15, 17, 19, 22, 24 };
+    float t = 0.3f; bool first = true;
+    while (t < 19.0f)
+    {
+        const int note = base + scale[(int) (r.uni() * 11)] + (base >= 40 ? 12 * (r.uni() < 0.3f) : 0);
+        const float len = 0.12f + r.uni() * r.uni() * 0.9f;
+        const bool legato = ! first && r.uni() < 0.35f;
+        first = false;
+        const float hz = mtof ((float) note), amp = (legato ? 0.12f : 0.25f) * (0.6f + 0.4f * r.uni());
+        const float vib = r.uni() < 0.25f ? 0.15f : 0.0f;
+        const int i0 = (int) (t * kSr), i1 = std::min ((int) ph.x.size(), (int) ((t + len + 1.5f) * kSr));
+        float phs[10]; for (auto& v : phs) v = r.uni();
+        const float release = t + len;
+        for (int i = i0; i < i1; ++i)
+        {
+            const float tt = (float) (i - i0) / kSr, at = (float) i / kSr;
+            const float mute = at > release ? std::exp (-(at - release) / 0.025f) : 1.0f;
+            if (mute < 1e-4f) break;
+            const float bend = vib * std::sin (6.2831853f * 5.5f * tt) * std::min (1.0f, tt / 0.3f);
+            const float f = hz * std::pow (2.0f, bend / 12.0f);
+            float v = 0.0f;
+            for (int h = 1; h <= 10; ++h)
+            {
+                const float fh = f * (float) h * std::sqrt (1.0f + 0.0004f * (float) (h * h));
+                if (fh > 6000.0f) break;
+                phs[h - 1] += fh / kSr;
+                v += std::abs (std::sin (3.14159f * (float) h * 0.22f)) / (float) h * std::exp (-tt * (1.2f + 0.6f * (float) h)) * std::sin (6.2831853f * phs[h - 1]);
+            }
+            if (! legato && tt < 0.004f) v += r.bi() * 0.5f * (1.0f - tt / 0.004f);
+            ph.x[(size_t) i] += amp * v * mute;
+            if (at <= release) ph.truth[(size_t) i] = (float) note + bend;
+        }
+        t += len + (r.uni() < 0.2f ? 0.15f + r.uni() * 0.3f : 0.0f);
+    }
+    for (auto& v : ph.x) v = v * gain + r.bi() * 0.0001f;
+    return ph;
+}
+
+static void playingSuite()
+{
+    std::printf ("Real playing\n");
+    for (int input : { 0, 1 })
+        for (float gain : { 1.0f, 0.1f, 0.03f })
+        {
+            const auto ph = guitarPhrase (input == 1 ? 28 : 40, gain, 77u + (uint32_t) input);
+            BitrotEngine e; e.prepare (kSr);
+            EngineParams p; p.input = input;   // every other setting as it ships
+            std::vector<float> L (ph.x), R (ph.x);
+            int right = 0, octave = 0, total = 0;
+            float since = 0.0f, last = -1.0f;
+            for (size_t i = 0; i + 64 <= L.size(); i += 64)
+            {
+                e.process (&L[i], &R[i], 64, p);
+                const float tr = ph.truth[i + 63];
+                if (tr > 0.0f && (last < 0.0f || std::abs (tr - last) > 0.5f)) since = 0.0f;
+                since += 64.0f / kSr;
+                last = tr;
+                if (tr <= 0.0f || ! e.gate() || since < 0.06f) continue;
+                const float err = ftom (e.oscillatorHz()) - (tr + 12.0f);   // default interval: +1 oct
+                ++total;
+                if (std::abs (err) < 0.3f) ++right;
+                else if (std::abs (std::abs (err) - 12.0f) < 0.5f) ++octave;
+            }
+            const float pr = 100.0f * (float) right / (float) std::max (1, total), po = 100.0f * (float) octave / (float) std::max (1, total);
+            check (pr > 90.0f && po < 1.0f, std::string (input == 1 ? "bass" : "guitar")
+                   + fmt (" at %.0f dB: oscillator on the note %.1f%% of the time after 60 ms, an octave out %.1f%%", 20.0 * std::log10 (gain), pr, po));
+            if (gain == 1.0f) writeWav (input == 1 ? "phrase_bass" : "phrase_guitar", L, R);
+        }
+
+    // a default note change lands quickly: glide is a steady slide, not a creep
+    {
+        std::vector<float> s ((size_t) (0.8f * kSr));
+        for (size_t i = 0; i < s.size(); ++i)
+        {
+            const float hz = i < s.size() / 2 ? 110.0f : 146.83f;
+            s[i] = 0.25f * std::sin (6.2831853f * hz * (float) i / kSr);
+        }
+        BitrotEngine e; e.prepare (kSr);
+        EngineParams p; p.square = 0; p.sub = 0;
+        const auto run = render (e, p, withLeadIn (s));
+        const size_t at = (size_t) ((2400 + 0.4f * kSr + 0.04f * kSr) / 64);
+        const float c = 1200.0f * std::log2 (run.oscHz[at] / 293.66f);
+        check (std::abs (c) < 25.0f, fmt ("default Rate: A2 to D3 has landed 40 ms after the change (%.0f cents)", c));
+    }
+}
+
 static void characterSuite()
 {
     std::printf ("Corruption and safety\n");
@@ -502,6 +600,7 @@ int main (int argc, char** argv)
     intervalSuite();
     subSuite();
     performanceSuite();
+    playingSuite();
     characterSuite();
     std::printf (failures == 0 ? "All passed\n" : "%d FAILED\n", failures);
     return failures == 0 ? 0 : 1;

@@ -33,7 +33,7 @@ struct EngineParams
     int subMix = 0;          // oscillator root: 0 sum and difference, 1 plain divide
     // frequency modulator
     int fmMode = 0;          // 0 glide, 1 vibrato
-    float rate = 0.5f, depth = 0.4f;
+    float rate = 0.6f, depth = 0.4f;
     // master oscillator
     int oscInterval = 1;     // 0..7: harmonic 1..8
     int oscRoot = 0;         // 0 unison, 1 -1 oct, 2 -2 oct
@@ -96,12 +96,13 @@ public:
         lastLpHz = -1.0f;
         envA = std::exp (-1.0f / (0.0005f * sr)); envR = std::exp (-1.0f / (0.030f * sr));
         compA = std::exp (-1.0f / (0.002f * sr)); compR = std::exp (-1.0f / (0.080f * sr));
-        env = compEnv = 0.0f;
+        env = compEnv = playLevel = 0.0f;
+        playUp = 1.0f - std::exp (-1.0f / (0.010f * sr)); playDown = 1.0f - std::exp (-1.0f / (4.0f * sr));
         prevX = 0.0f; cmpHigh = false; gateOpen = false; gateHold = 0;
         sq.reset (-1.0f); oscSq.reset (-1.0f); subSq.reset (-1.0f);
         rootCount = 0; fbCount = 0; up = down = false;
         integ = std::log2 (110.0f); vcoPhase = 0.0f; outPhase = 0.0f;
-        outCv = integ; glideCv = integ;
+        outCv = integ; glideCv = integ; slewCv = integ;
         subEdgeCount = 0; subState = false; subPhase = 0.0f; oscState = false;
         sinceRise = 0; srcPeriod = 0.0f; lastPeriods = { 0, 0, 0 };
         lfoPhase = 0.0f; amp = 0.0f; voiceAmp = 0.0f; bypassMix = 0.0f;
@@ -134,15 +135,24 @@ public:
         const float spike = c > 0.5f ? 0.0f : 0.00025f * sr;   // smooth the proportional kick in tight
 
         // frequency modulator
-        const float glideS = p.fmMode == 0 ? 0.002f + (1.0f - p.rate) * (1.0f - p.rate) * 0.9f : 0.003f;
-        const float glideCoef = std::exp (-1.0f / (glideS * sr));
+        // Glide is a slide at a steady number of octaves per second, a straight line on a
+        // keyboard, as the pedal's recordings show: Rate runs from 0.8 oct/s (a slow swoop)
+        // to 200 oct/s (a jump). A 1 ms smoother takes the edge off the steps.
+        const float slewOctPerSec = p.fmMode == 0 ? glideSlew (p.rate) : 400.0f;
+        const float slewPerSample = slewOctPerSec / sr;
+        const float glideCoef = std::exp (-1.0f / (0.001f * sr));
         const float spikeCoef = spike > 0.0f ? std::exp (-1.0f / spike) : 0.0f;
         const float lfoHz = 0.5f * std::pow (28.0f, p.rate);
         const float vibOct = p.fmMode == 1 ? (0.1f + p.depth * p.depth * 5.9f) / 12.0f : 0.0f;
         const float extraCv = (p.octUp ? 1.0f : 0.0f) + 3.0f * clamp01 (p.bend);
 
         // gate, as the pedal: weak signals stop the synth
-        const float g = 0.0008f + 0.02f * (1.0f - p.gate) * (1.0f - p.gate);
+        // The gate follows how loud you play rather than sitting at a fixed level, so a quiet
+        // interface input tracks as well as a hot one. It opens 24 to 40 dB under your playing
+        // level (Gate sensitivity), never lower than just above amp hiss.
+        const float gFloor = 0.0004f + 0.004f * (1.0f - p.gate) * (1.0f - p.gate);
+        const float gRel = std::pow (10.0f, -(24.0f + 16.0f * p.gate) / 20.0f);
+        const float g = std::max (gFloor, playLevel * gRel);
         const float hyst = 0.10f - 0.08f * c;
 
         // freeze: hold the oscillator and sub on the note from the moment the switch went down
@@ -163,7 +173,9 @@ public:
             const float raw = hp.process (0.5f * (inL + inR));
 
             // ---- lock assist: the tracker hears the note first ----
-            const auto ev = tracker.push (raw);
+            // the tracker hears your playing at a steady level, whatever the interface gain
+            const float agc = 0.25f / std::max (playLevel, 0.008f);   // at most about 30 dB of lift
+            const auto ev = tracker.push (raw * agc);
             if (ev == MonoTracker::Event::NoteOn || ev == MonoTracker::Event::NoteChange)
             {
                 const float tHz = mtof (tracker.currentNote());
@@ -188,6 +200,8 @@ public:
             // ---- envelope and gate ----
             const float ax = std::abs (raw);
             env = ax > env ? ax + envA * (env - ax) : ax + envR * (env - ax);
+            // your playing level: follows loud playing in about 10 ms, lets go over seconds
+            playLevel += (env - playLevel) * (env > playLevel ? playUp : playDown);
             const bool wasOpen = gateOpen;
             if (! gateOpen && env > g) gateOpen = true;
             else if (gateOpen && env < g * 0.6f) gateOpen = false;
@@ -294,7 +308,8 @@ public:
                 const float settled = clamp01 (1.0f - (lockErr - 0.04f) * 4.0f);
                 if (std::abs (tCv - integ) < 0.5f) heard += (tCv - spikeCv) * std::sqrt (assist) * (1.0f - settled);
             }
-            glideCv = heard + glideCoef * (glideCv - heard);
+            slewCv += std::max (-slewPerSample, std::min (slewPerSample, heard - slewCv));
+            glideCv = slewCv + glideCoef * (glideCv - slewCv);
             float baseCv = glideCv;
             if (frozen) baseCv = frozenCv;
             if (++histTick >= kHistHop) { histTick = 0; pushHistory (glideCv, currentSrcHz (p, N, rootDiv)); }
@@ -391,6 +406,8 @@ public:
         uiLock.store (gateOpen ? lock : -1.0f);
     }
 
+    static float glideSlew (float rate) { return 0.8f * std::pow (250.0f, clamp01 (rate)); }   // octaves per second
+
     // test hooks
     int dbgRef = 0, dbgFb = 0;
     bool trackerActive() const { return tracker.active(); }
@@ -477,11 +494,11 @@ private:
     int lastRange = -1; float lastChar = -1.0f, lastSens = -1.0f, lastLpHz = -1.0f;
     Biquad hp, lp[2], bp, outDc, subHp;
     float lastBpHz = 1.0f; bool assisting = false, resync = false;
-    float env = 0, envA = 0, envR = 0, compEnv = 0, compA = 0, compR = 0;
+    float env = 0, envA = 0, envR = 0, compEnv = 0, compA = 0, compR = 0, playLevel = 0, playUp = 0, playDown = 0;
     float prevX = 0; bool cmpHigh = false, gateOpen = false; int gateHold = 0;
     EdgeSquare sq, oscSq, subSq;
     int rootCount = 0, fbCount = 0; bool up = false, down = false;
-    float integ = 6.8f, vcoPhase = 0, spikeCv = 6.8f, glideCv = 6.8f, outCv = 6.8f, outPhase = 0;
+    float integ = 6.8f, vcoPhase = 0, spikeCv = 6.8f, glideCv = 6.8f, slewCv = 6.8f, outCv = 6.8f, outPhase = 0;
     int subEdgeCount = 0; bool subState = false, oscState = false; float subPhase = 0;
     int sinceRise = 0; float srcPeriod = 0; std::array<int, 3> lastPeriods {};
     float lfoPhase = 0, amp = 0, voiceAmp = 0, bypassMix = 0;
