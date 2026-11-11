@@ -122,6 +122,10 @@ Flip Fella dark family: the same black housing, cards, ink and accent colours as
 - Hold B steps the subharmonic back.
 - Vibrato depth fixed on the panel, Depth on the Deep page.
 
+## Tracking fix (11 November 2026)
+
+Version 0.2.0 fixes the unruly tracking found against two demo recordings: glide is now a steady octaves-per-second slide, the tracker no longer holds notes an octave low, and quiet inputs track as well as hot ones. Details and the plan for Changeling and Divebomb: `docs/tracking-plan.md`.
+
 ## Portability
 
 - Windows x64 VST3 and standalone from GitHub Actions on every push, published to the `builds` branch like the other plugins.

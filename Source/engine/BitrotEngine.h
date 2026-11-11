@@ -173,9 +173,7 @@ public:
             const float raw = hp.process (0.5f * (inL + inR));
 
             // ---- lock assist: the tracker hears the note first ----
-            // the tracker hears your playing at a steady level, whatever the interface gain
-            const float agc = 0.25f / std::max (playLevel, 0.008f);   // at most about 30 dB of lift
-            const auto ev = tracker.push (raw * agc);
+            const auto ev = tracker.push (raw);   // the tracker levels its own input
             if (ev == MonoTracker::Event::NoteOn || ev == MonoTracker::Event::NoteChange)
             {
                 const float tHz = mtof (tracker.currentNote());

@@ -5,6 +5,14 @@
 
 namespace bit
 {
+// Flip Fella shared pitch tracker, version 2 (November 2026). One file, copied unchanged into
+// every plugin that tracks pitch (Bitrot, Changeling, Divebomb); only the namespace line
+// differs. Bitrot's Tests/RenderTest.cpp "Real playing" suite is its reference test.
+//
+// Version 2 fixes, measured on realistic guitar and bass phrases:
+// - notes held an octave low for their whole length (the up-octave check, below)
+// - quiet interface inputs going unheard (the input is levelled to your playing)
+//
 // Monophonic pitch tracker built for the low end.
 //
 // The input is low-passed and decimated to about 8 kHz. Every 2 ms a normalised square
@@ -14,7 +22,8 @@ namespace bit
 //
 // Octave guard: the second harmonic of a bass string is often louder than the
 // fundamental, so a candidate period is only accepted once double that period has been
-// checked too (unless double is out of range). Hysteresis keeps a fading note as one
+// checked too (unless double is out of range). The up-octave check is its mirror: if half
+// the period fits nearly as well, the higher octave is the note. Hysteresis keeps a fading note as one
 // note: no retriggers and no octave flips on the decay.
 //
 // Character (0 tight .. 1 wild) brings back the original's glitches on purpose:
@@ -47,6 +56,9 @@ public:
         buf.fill (0.0f);
         pos = 0; written = 0; counter = 0; hopCounter = 0;
         envFast = envSlow = 0.0f;
+        inEnv = playLevel = 0.0f;
+        inA = std::exp (-1.0f / (0.0005f * sr)); inR = std::exp (-1.0f / (0.030f * sr));
+        playUp = 1.0f - std::exp (-1.0f / (0.010f * sr)); playDown = 1.0f - std::exp (-1.0f / (4.0f * sr));
         fastA = std::exp (-1.0f / (0.0007f * sr)); fastR = std::exp (-1.0f / (0.030f * sr));
         slowA = std::exp (-1.0f / (0.040f * sr)); slowR = std::exp (-1.0f / (0.250f * sr));
         state = Idle; note = -1.0f; shown = -1.0f; clarity = 0.0f;
@@ -75,6 +87,13 @@ public:
     Event push (float x)
     {
         x = dcBlock.process (x);
+        // Hear your playing at a steady level whatever the interface gain: follow how loud you
+        // play (up in about 10 ms, down over seconds) and lift it to a fixed level, at most
+        // about 30 dB, so the gate and onset tests are relative to your playing.
+        const float ax0 = std::abs (x);
+        inEnv = ax0 > inEnv ? ax0 + inA * (inEnv - ax0) : ax0 + inR * (inEnv - ax0);
+        playLevel += (inEnv - playLevel) * (inEnv > playLevel ? playUp : playDown);
+        x *= 0.25f / std::max (playLevel, 0.008f);
         const float ax = std::abs (x);
         envFast = ax > envFast ? ax + fastA * (envFast - ax) : ax + fastR * (envFast - ax);
         envSlow = envFast > envSlow ? envFast + slowA * (envSlow - envFast) : envFast + slowR * (envSlow - envFast);
@@ -379,6 +398,7 @@ private:
     long long written = 0, seekStart = 0;
     int tauMin = 6, tauMax = 300;
     float envFast = 0, envSlow = 0, fastA = 0, fastR = 0, slowA = 0, slowR = 0, gate = 0.002f;
+    float inEnv = 0, inA = 0, inR = 0, playLevel = 0, playUp = 0, playDown = 0;
     int sinceOnset = 1 << 20, refractory = 0, belowGate = 0, changeVotes = 0, octaveVotes = 0, flipHops = 0;
     bool onsetPending = false;
     State state = Idle;
